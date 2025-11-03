@@ -9,7 +9,6 @@ class MeasurementInstrumentAgent:
     def __init__(self, excel_file_path, sheet_name=None, header_row=None):
         """Initialize the agent with the Excel data"""
         self.excel_file_path = excel_file_path
-        # default to the expected sheet if none provided
         self.sheet_name = sheet_name or 'Measurement Instruments'
         self.header_row = 0 if header_row is None else header_row
 
@@ -20,13 +19,8 @@ class MeasurementInstrumentAgent:
         
     def preprocess_data(self):
         """Clean and preprocess the data"""
-        # Safely fill NaN values (avoid in-place dtype warnings)
-        # Convert to object to allow concatenation below
         self.df = self.df.fillna('').astype(object)
 
-        # Ensure expected columns exist. If a close match exists, use it; otherwise
-        # create an empty column so downstream code doesn't KeyError. This list
-        # covers all column names referenced throughout the class.
         expected_cols = [
             'Measurement Instrument', 'Acronym', 'Outcome Domain',
             'Outcome Keywords', 'Purpose', 'Target Group(s)',
@@ -36,26 +30,20 @@ class MeasurementInstrumentAgent:
             'Repository of Impact Measurement Instruments'
         ]
 
-        # also include sample question columns
         for i in range(1, 4):
             expected_cols.append(f'Sample Question / Statement - {i}')
 
-        # map lowercase column names to original names for fuzzy matching
         lc_map = {c.lower(): c for c in self.df.columns}
 
         for col in expected_cols:
             if col not in self.df.columns:
-                # Try a fuzzy/case-insensitive match against existing columns
                 match = difflib.get_close_matches(col.lower(), lc_map.keys(), n=1, cutoff=0.6)
                 if match:
                     matched_col = lc_map[match[0]]
-                    # copy data from matched column into the expected column name
                     self.df[col] = self.df[matched_col]
                 else:
-                    # create empty column to avoid KeyError later
                     self.df[col] = ''
 
-        # Create a combined text field for similarity search (force string)
         self.df['combined_text'] = (
             self.df['Measurement Instrument'].astype(str) + ' ' +
             self.df['Acronym'].astype(str) + ' ' +
@@ -72,29 +60,24 @@ class MeasurementInstrumentAgent:
             ngram_range=(1, 2),
             max_features=5000
         )
-        # Build TF-IDF matrix from combined text
         self.tfidf_matrix = self.vectorizer.fit_transform(self.df['combined_text'])
     
     def search_instruments(self, query, top_k=3):
         """
         Search for the most relevant instruments based on user query
         """
-        # If TF-IDF wasn't built, return no results
         if self.vectorizer is None or self.tfidf_matrix is None:
             return []
 
-        # Transform query to TF-IDF
         query_vec = self.vectorizer.transform([query])
 
-        # Calculate similarities
         similarities = cosine_similarity(query_vec, self.tfidf_matrix).flatten()
         
-        # Get top matches
         top_indices = similarities.argsort()[-top_k:][::-1]
         
         results = []
         for idx in top_indices:
-            if similarities[idx] > 0.1:  # Minimum similarity threshold
+            if similarities[idx] > 0.1:
                 instrument_data = self.df.iloc[idx]
                 results.append({
                     'instrument': instrument_data,
@@ -136,28 +119,24 @@ class MeasurementInstrumentAgent:
         """Generate important considerations for the instrument"""
         considerations = []
         
-        # Cost considerations
         cost = instrument_data.get('Cost', '')
         if 'free' in str(cost).lower():
             considerations.append("✓ Free to use")
         else:
             considerations.append(f"Cost: {cost}")
         
-        # Permission requirements
         permission = instrument_data.get('Permission to Use', '')
         if 'not required' in str(permission).lower():
             considerations.append("✓ No permission required")
         else:
             considerations.append(f"Permission: {permission}")
         
-        # Data collection requirements
         data_collection = instrument_data.get('Data Collection', '')
         if 'equipment' in str(data_collection).lower():
             considerations.append("⚠ Requires special equipment")
         if 'administered' in str(data_collection).lower():
             considerations.append("⚠ Requires trained administrator")
         
-        # Validation status
         validated = instrument_data.get('Validated in Hong Kong', '')
         if validated and str(validated).strip() and str(validated).lower() not in ['-', 'no']:
             considerations.append("✓ Validated in Hong Kong context")
@@ -171,9 +150,7 @@ class MeasurementInstrumentAgent:
         advantages = []
         disadvantages = []
         
-        # Number of questions analysis
         num_questions = instrument_data.get('No. of Questions / Statements', '')
-        # Extract integer if present (e.g., '8 aspects')
         num_q_int = None
         if isinstance(num_questions, (int, float)):
             num_q_int = int(num_questions)
@@ -190,7 +167,6 @@ class MeasurementInstrumentAgent:
         else:
             advantages.append("Reasonable administration time")
         
-        # Data collection analysis
         data_collection = str(instrument_data.get('Data Collection', '')).lower()
         if 'self-administered' in data_collection:
             advantages.append("Can be self-administered")
@@ -199,7 +175,6 @@ class MeasurementInstrumentAgent:
         if 'trained' in data_collection:
             disadvantages.append("Requires trained administrator")
         
-        # Sample questions analysis
         has_sample_questions = any(
             instrument_data.get(f'Sample Question / Statement - {i}', '') not in ['', '-']
             for i in range(1, 4)
@@ -213,7 +188,6 @@ class MeasurementInstrumentAgent:
         """
         Main method to process user query and return recommendations
         """
-        # Search for relevant instruments
         results = self.search_instruments(user_query)
         
         if not results:
@@ -225,7 +199,6 @@ class MeasurementInstrumentAgent:
             'comparison': {}
         }
         
-        # Process each recommended instrument
         for result in results:
             instrument_data = result['instrument']
             
@@ -248,14 +221,12 @@ class MeasurementInstrumentAgent:
                 }
             }
             
-            # Generate advantages and disadvantages
             advantages, disadvantages = self.generate_advantages_disadvantages(instrument_data)
             recommendation['advantages'] = advantages
             recommendation['disadvantages'] = disadvantages
             
             response['recommendations'].append(recommendation)
         
-        # Add comparison information
         response['comparison'] = self.compare_instruments(response['recommendations'])
         
         return response
@@ -271,12 +242,10 @@ class MeasurementInstrumentAgent:
             'common_considerations': []
         }
         
-        # Find common advantages
         all_advantages = [set(rec['advantages']) for rec in recommendations]
         common_advantages = set.intersection(*all_advantages) if all_advantages else set()
         comparison['common_advantages'] = list(common_advantages)
         
-        # Find common considerations
         all_considerations = [set(rec['considerations']) for rec in recommendations]
         common_considerations = set.intersection(*all_considerations) if all_considerations else set()
         comparison['common_considerations'] = list(common_considerations)
@@ -298,7 +267,6 @@ class MeasurementInstrumentAgent:
             response += f"   • **Domain**: {rec['domain']}\n"
             response += f"   • **Items**: {rec['num_questions']} questions\n\n"
             
-            # Scoring information
             response += f"   **Scoring Information**:\n"
             response += f"   - Scale: {rec['scoring_info']['scale']}\n"
             response += f"   - Scoring: {rec['scoring_info']['scoring']}\n"
@@ -306,7 +274,6 @@ class MeasurementInstrumentAgent:
                 for interpret in rec['scoring_info']['interpretation']:
                     response += f"   - {interpret}\n"
             
-            # Advantages and Disadvantages
             response += f"\n   **Advantages**:\n"
             for adv in rec['advantages']:
                 response += f"   ✓ {adv}\n"
@@ -315,14 +282,12 @@ class MeasurementInstrumentAgent:
             for disadv in rec['disadvantages']:
                 response += f"   ⚠ {disadv}\n"
             
-            # Important Considerations
             response += f"\n   **Important Notes**:\n"
             for consideration in rec['considerations']:
                 response += f"   • {consideration}\n"
             
             response += "\n" + "-"*50 + "\n\n"
         
-        # Comparison section
         if processed_results['comparison']:
             response += "**📊 Comparison Summary**:\n"
             if processed_results['comparison']['common_advantages']:
@@ -337,7 +302,6 @@ class MeasurementInstrumentAgent:
         
         return response
 
-    # Advanced features integrated directly into the main class
     def filter_by_criteria(self, criteria):
         """
         Filter instruments by specific criteria
@@ -389,5 +353,3 @@ class MeasurementInstrumentAgent:
             results = self.process_query(user_input)
             response = self.format_response(results)
             print("\n" + response)
-
-# Run: streamlit run frontend/app.py

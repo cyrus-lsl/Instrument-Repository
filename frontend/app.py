@@ -3,7 +3,7 @@ import pandas as pd
 import sys
 from pathlib import Path
 
-# Add parent directory to Python path so we can import backend
+# Add parent directory to Python
 root_dir = Path(__file__).parent.parent
 sys.path.append(str(root_dir))
 
@@ -17,14 +17,14 @@ def load_agent(path):
 st.set_page_config(page_title='Outcome Repo Agent', layout='wide')
 st.title('Outcome Repository — Measurement Instrument Assistant')
 
-# Initialize session state for chat history if it doesn't exist
+# Initialize session state for chat history
 if 'chat_history' not in st.session_state:
     st.session_state.chat_history = []
 
 EXCEL_PATH = '/Users/cyrus_lsl/Documents/HKJC/Outcome Repo Agent/measurement_instruments.xlsx'
 agent = load_agent(EXCEL_PATH)
 
-# Sidebar with download option and example queries
+# Sidebar: download option and example queries
 st.sidebar.header('Actions & Help')
 if st.sidebar.button('Download parsed table (CSV)'):
     csv = agent.df.to_csv(index=False)
@@ -49,7 +49,7 @@ if st.sidebar.button("Show example queries"):
             {"role": "assistant", "content": agent.format_response(results)}
         )
 
-# Main chat interface
+# Chat interface
 st.header("Ask about measurement instruments")
 st.markdown("""
 Type your query about measurement instruments. Examples:
@@ -58,10 +58,10 @@ Type your query about measurement instruments. Examples:
 - Search by properties: "quick screening tools" or "validated in Hong Kong"
 """)
 
-# Chat input at the bottom
+# Chat input
 query = st.text_input('Enter your enquiry', key='user_input')
 
-# Add send button
+# Send button
 if st.button('Send', key='send_button') and query.strip():
     # Add user message to chat
     st.session_state.chat_history.append({"role": "user", "content": query})
@@ -70,10 +70,10 @@ if st.button('Send', key='send_button') and query.strip():
     results = agent.process_query(query)
     response = agent.format_response(results)
     
-    # Add assistant response to chat
+    # Add assistant response
     st.session_state.chat_history.append({"role": "assistant", "content": response})
 
-# Display chat history
+# Show chat history
 st.header("Conversation History")
 for message in st.session_state.chat_history:
     if message["role"] == "user":
@@ -84,11 +84,9 @@ for message in st.session_state.chat_history:
 
 # Collapsible data explorer
 with st.expander("Browse all instruments"):
-    # Convert potentially mixed-type columns to string to avoid pyarrow conversion
     df_display = agent.df.copy()
     if 'No. of Questions / Statements' in df_display.columns:
         df_display['No. of Questions / Statements'] = df_display['No. of Questions / Statements'].astype(str)
-    # Ensure all columns are arrow-compatible by casting object columns to string
     for c in df_display.select_dtypes(include=['object']).columns:
         df_display[c] = df_display[c].astype(str)
 
