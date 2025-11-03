@@ -8,10 +8,17 @@ root_dir = Path(__file__).parent.parent
 sys.path.append(str(root_dir))
 
 from backend.outcome_repo_agent import MeasurementInstrumentAgent
+import os
+
 
 @st.cache_resource
-def load_agent(path):
-    agent = MeasurementInstrumentAgent(path, sheet_name='Measurement Instruments')
+def load_agent(path_or_buffer):
+    """Load and cache the MeasurementInstrumentAgent.
+
+    Accepts either a filesystem path (str/Path) or a file-like buffer
+    returned by Streamlit's file_uploader.
+    """
+    agent = MeasurementInstrumentAgent(path_or_buffer, sheet_name='Measurement Instruments')
     return agent
 
 st.set_page_config(page_title='Outcome Repo Agent', layout='wide')
@@ -22,13 +29,33 @@ if 'chat_history' not in st.session_state:
     st.session_state.chat_history = []
 
 EXCEL_PATH = '/Users/cyrus_lsl/Documents/HKJC/Outcome Repo Agent/measurement_instruments.xlsx'
-agent = load_agent(EXCEL_PATH)
+
+# Try to load the default file if it exists, otherwise prompt user to upload
+agent = None
+if os.path.exists(EXCEL_PATH):
+    try:
+        agent = load_agent(EXCEL_PATH)
+    except Exception as e:
+        st.error(f"Failed to load default data file: {e}")
+else:
+    st.warning(f"Default Excel file not found at {EXCEL_PATH}. Please upload an Excel file.")
+
+# Allow user to upload an excel file when the default path is not available
+uploaded_file = st.file_uploader("Upload measurement instruments Excel", type=['xls', 'xlsx'])
+if uploaded_file is not None:
+    try:
+        agent = load_agent(uploaded_file)
+    except Exception as e:
+        st.error(f"Failed to load uploaded file: {e}")
 
 # Sidebar: download option and example queries
 st.sidebar.header('Actions & Help')
-if st.sidebar.button('Download parsed table (CSV)'):
-    csv = agent.df.to_csv(index=False)
-    st.sidebar.download_button('Download CSV', csv, file_name='instruments_parsed.csv')
+if agent:
+    if st.sidebar.button('Download parsed table (CSV)'):
+        csv = agent.df.to_csv(index=False)
+        st.sidebar.download_button('Download CSV', csv, file_name='instruments_parsed.csv')
+else:
+    st.sidebar.info('Upload or provide a valid Excel file to enable downloads and queries.')
 
 st.sidebar.header('Example queries')
 example_queries = [
@@ -43,11 +70,14 @@ if st.sidebar.button("Show example queries"):
         example_queries
     )
     if st.sidebar.button("Use this query"):
-        st.session_state.chat_history.append({"role": "user", "content": query})
-        results = agent.process_query(query)
-        st.session_state.chat_history.append(
-            {"role": "assistant", "content": agent.format_response(results)}
-        )
+        if not agent:
+            st.sidebar.info('Please upload or provide the Excel file before running queries.')
+        else:
+            st.session_state.chat_history.append({"role": "user", "content": query})
+            results = agent.process_query(query)
+            st.session_state.chat_history.append(
+                {"role": "assistant", "content": agent.format_response(results)}
+            )
 
 # Chat interface
 st.header("Ask about measurement instruments")
@@ -67,11 +97,14 @@ if st.button('Send', key='send_button') and query.strip():
     st.session_state.chat_history.append({"role": "user", "content": query})
     
     # Get agent response
-    results = agent.process_query(query)
-    response = agent.format_response(results)
-    
-    # Add assistant response
-    st.session_state.chat_history.append({"role": "assistant", "content": response})
+    if not agent:
+        st.session_state.chat_history.append({"role": "assistant", "content": "Please upload or provide a valid Excel file before querying."})
+    else:
+        results = agent.process_query(query)
+        response = agent.format_response(results)
+        # Add assistant response
+        st.session_state.chat_history.append({"role": "assistant", "content": response})
+        
 
 # Show chat history
 st.header("Conversation History")
@@ -84,19 +117,22 @@ for message in st.session_state.chat_history:
 
 # Collapsible data explorer
 with st.expander("Browse all instruments"):
-    df_display = agent.df.copy()
-    if 'No. of Questions / Statements' in df_display.columns:
-        df_display['No. of Questions / Statements'] = df_display['No. of Questions / Statements'].astype(str)
-    for c in df_display.select_dtypes(include=['object']).columns:
-        df_display[c] = df_display[c].astype(str)
+    if not agent:
+        st.info('No data loaded. Upload an Excel file to browse instruments.')
+    else:
+        df_display = agent.df.copy()
+        if 'No. of Questions / Statements' in df_display.columns:
+            df_display['No. of Questions / Statements'] = df_display['No. of Questions / Statements'].astype(str)
+        for c in df_display.select_dtypes(include=['object']).columns:
+            df_display[c] = df_display[c].astype(str)
 
-    st.dataframe(df_display)
-    
-    st.subheader('Quick lookup')
-    name = st.text_input('Get details for instrument (name contains)', '')
-    if st.button('Get Details') and name.strip():
-        details = agent.get_instrument_details(name)
-        if details:
-            st.json(details)
-        else:
-            st.info('No instrument matched that name')
+        st.dataframe(df_display)
+        
+        st.subheader('Quick lookup')
+        name = st.text_input('Get details for instrument (name contains)', '')
+        if st.button('Get Details') and name.strip():
+            details = agent.get_instrument_details(name)
+            if details:
+                st.json(details)
+            else:
+                st.info('No instrument matched that name')

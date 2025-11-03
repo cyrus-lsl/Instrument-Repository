@@ -1,4 +1,5 @@
 import pandas as pd
+import os
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -11,6 +12,10 @@ class MeasurementInstrumentAgent:
         self.excel_file_path = excel_file_path
         self.sheet_name = sheet_name or 'Measurement Instruments'
         self.header_row = 0 if header_row is None else header_row
+
+        if isinstance(self.excel_file_path, (str,)):
+            if not os.path.exists(self.excel_file_path):
+                raise FileNotFoundError(f"Excel file not found: {self.excel_file_path}")
 
         read_kwargs = {'sheet_name': self.sheet_name, 'header': self.header_row}
         self.df = pd.read_excel(excel_file_path, **read_kwargs)
