@@ -28,32 +28,17 @@ st.title('Outcome Repository — Measurement Instrument Assistant')
 if 'chat_history' not in st.session_state:
     st.session_state.chat_history = []
 
-# Prefer an environment variable (useful for deployments). If not set, fall
-# back to a repo-relative file named `measurement_instruments.xlsx` at the
-# repository root. Finally, fall back to an uploader so demos still work.
-EXCEL_PATH_ENV = os.environ.get('EXCEL_PATH')
-if EXCEL_PATH_ENV:
-    excel_path = Path(EXCEL_PATH_ENV)
-else:
-    excel_path = Path(__file__).resolve().parents[1] / "measurement_instruments.xlsx"
+# Load the repo-bundled Excel file by default (no uploader). This expects
+# `measurement_instruments.xlsx` to live at the repository root.
+excel_path = Path(__file__).resolve().parents[1] / "measurement_instruments.xlsx"
 
-# Try to load the default file if it exists, otherwise prompt user to upload
 agent = None
-if excel_path.exists():
-    try:
-        agent = load_agent(str(excel_path))
-    except Exception as e:
-        st.error(f"Failed to load default data file: {e}")
-else:
-    st.warning(f"Default Excel file not found at {excel_path}. Please upload an Excel file or set the EXCEL_PATH environment variable.")
-
-# Allow user to upload an excel file when the default path is not available
-uploaded_file = st.file_uploader("Upload measurement instruments Excel", type=['xls', 'xlsx'])
-if uploaded_file is not None:
-    try:
-        agent = load_agent(uploaded_file)
-    except Exception as e:
-        st.error(f"Failed to load uploaded file: {e}")
+try:
+    agent = load_agent(str(excel_path))
+except FileNotFoundError:
+    st.error(f"Required data file not found at {excel_path}. Please add `measurement_instruments.xlsx` to the repo root.")
+except Exception as e:
+    st.error(f"Failed to load measurement instruments file: {e}")
 
 # Sidebar: download option and example queries
 st.sidebar.header('Actions & Help')
