@@ -28,17 +28,24 @@ st.title('Outcome Repository — Measurement Instrument Assistant')
 if 'chat_history' not in st.session_state:
     st.session_state.chat_history = []
 
-EXCEL_PATH = '/Users/cyrus_lsl/Documents/HKJC/Outcome Repo Agent/measurement_instruments.xlsx'
+# Prefer an environment variable (useful for deployments). If not set, fall
+# back to a repo-relative file named `measurement_instruments.xlsx` at the
+# repository root. Finally, fall back to an uploader so demos still work.
+EXCEL_PATH_ENV = os.environ.get('EXCEL_PATH')
+if EXCEL_PATH_ENV:
+    excel_path = Path(EXCEL_PATH_ENV)
+else:
+    excel_path = Path(__file__).resolve().parents[1] / "measurement_instruments.xlsx"
 
 # Try to load the default file if it exists, otherwise prompt user to upload
 agent = None
-if os.path.exists(EXCEL_PATH):
+if excel_path.exists():
     try:
-        agent = load_agent(EXCEL_PATH)
+        agent = load_agent(str(excel_path))
     except Exception as e:
         st.error(f"Failed to load default data file: {e}")
 else:
-    st.warning(f"Default Excel file not found at {EXCEL_PATH}. Please upload an Excel file.")
+    st.warning(f"Default Excel file not found at {excel_path}. Please upload an Excel file or set the EXCEL_PATH environment variable.")
 
 # Allow user to upload an excel file when the default path is not available
 uploaded_file = st.file_uploader("Upload measurement instruments Excel", type=['xls', 'xlsx'])
