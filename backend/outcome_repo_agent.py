@@ -7,44 +7,16 @@ import difflib
 
 class MeasurementInstrumentAgent:
     def __init__(self, excel_file_path, sheet_name=None, header_row=None):
-        """
-        Initialize the agent with the Excel data
-        """
-        # Allow specifying sheet name and header row. If header_row is None,
-        # attempt to auto-detect the header row containing the instrument table.
+        """Initialize the agent with the Excel data"""
         self.excel_file_path = excel_file_path
-        self.sheet_name = sheet_name
+        # default to the expected sheet if none provided
+        self.sheet_name = sheet_name or 'Measurement Instruments'
+        self.header_row = 0 if header_row is None else header_row
 
-        if header_row is None:
-            detected = self.detect_table_header(excel_file_path, sheet_name=sheet_name)
-            if detected is not None:
-                header_row = detected
-                print(f"Info: Detected header row at index {header_row}")
-            else:
-                print("Warning: Could not confidently detect a header row; using header=0")
-
-        # Read the sheet using the chosen header_row (None -> pandas default 0)
-        read_kwargs = {}
-        if sheet_name is not None:
-            read_kwargs['sheet_name'] = sheet_name
-        if header_row is not None:
-            read_kwargs['header'] = header_row
-
+        read_kwargs = {'sheet_name': self.sheet_name, 'header': self.header_row}
         self.df = pd.read_excel(excel_file_path, **read_kwargs)
         self.preprocess_data()
         self.setup_similarity_engine()
-
-        # If TF-IDF couldn't be built (likely because the sheet didn't contain
-        # a real table), attempt to auto-detect a table region and re-read
-        # using that region as header.
-        if getattr(self, 'tfidf_matrix', None) is None:
-            region_start = self.detect_table_region(excel_file_path, sheet_name=sheet_name)
-            if region_start is not None and region_start != header_row:
-                print(f"Info: Detected table-like region starting at row {region_start}; re-reading with header={region_start}")
-                read_kwargs['header'] = region_start
-                self.df = pd.read_excel(excel_file_path, **read_kwargs)
-                self.preprocess_data()
-                self.setup_similarity_engine()
         
     def preprocess_data(self):
         """Clean and preprocess the data"""
@@ -79,11 +51,9 @@ class MeasurementInstrumentAgent:
                     matched_col = lc_map[match[0]]
                     # copy data from matched column into the expected column name
                     self.df[col] = self.df[matched_col]
-                    print(f"Info: Using column '{matched_col}' for expected '{col}'")
                 else:
                     # create empty column to avoid KeyError later
                     self.df[col] = ''
-                    print(f"Warning: Expected column '{col}' not found. Created empty column.")
 
         # Create a combined text field for similarity search (force string)
         self.df['combined_text'] = (
@@ -94,68 +64,6 @@ class MeasurementInstrumentAgent:
             self.df['Purpose'].astype(str) + ' ' +
             self.df['Target Group(s)'].astype(str)
         )
-
-    def detect_table_header(self, excel_file_path, sheet_name=None, max_rows=60):
-        """Attempt to detect which row contains the table header by scanning
-        the first `max_rows` rows for cells that match expected column names.
-        Returns the row index (0-based) if found, otherwise None.
-        """
-        # Read the sheet without headers
-        read_kwargs = {'header': None}
-        if sheet_name is not None:
-            read_kwargs['sheet_name'] = sheet_name
-
-        try:
-            raw = pd.read_excel(excel_file_path, **read_kwargs)
-        except Exception as e:
-            print(f"Error reading file for header detection: {e}")
-            return None
-
-        expected_keywords = [
-            'measurement instrument', 'acronym', 'outcome domain', 'outcome keyword',
-            'purpose', 'target', 'cost', 'citation', 'scoring', 'download', 'scale'
-        ]
-
-        best_row = None
-        best_score = 0
-
-        for i in range(min(len(raw), max_rows)):
-            row = raw.iloc[i].astype(str).str.lower().tolist()
-            score = 0
-            for kw in expected_keywords:
-                if any(kw in (str(cell) or '') for cell in row if cell and cell != 'nan'):
-                    score += 1
-
-            # Favor rows with multiple matches
-            if score > best_score and score >= 2:
-                best_score = score
-                best_row = i
-
-        return best_row
-
-    def detect_table_region(self, excel_file_path, sheet_name=None, min_nonnull=3, look_ahead=3, max_rows=200):
-        """Detect a contiguous region that looks like a table: a row with at least
-        `min_nonnull` non-empty cells followed by `look_ahead` rows that also have
-        at least `min_nonnull` non-empty cells. Returns the starting row index
-        to use as header, or None if not found.
-        """
-        read_kwargs = {'header': None}
-        if sheet_name is not None:
-            read_kwargs['sheet_name'] = sheet_name
-
-        try:
-            raw = pd.read_excel(excel_file_path, **read_kwargs)
-        except Exception as e:
-            print(f"Error reading file for table region detection: {e}")
-            return None
-
-        rows = len(raw)
-        for i in range(min(rows, max_rows)):
-            nonnull_counts = [(raw.iloc[j].notna().sum()) for j in range(i, min(i + look_ahead + 1, rows))]
-            if len(nonnull_counts) == look_ahead + 1 and all(c >= min_nonnull for c in nonnull_counts):
-                return i
-
-        return None
         
     def setup_similarity_engine(self):
         """Set up TF-IDF for semantic search"""
@@ -164,22 +72,8 @@ class MeasurementInstrumentAgent:
             ngram_range=(1, 2),
             max_features=5000
         )
-        # Ensure there is meaningful text to vectorize
-        docs = self.df['combined_text'].astype(str).tolist()
-        non_empty_docs = [d for d in docs if d.strip()]
-        if not non_empty_docs:
-            print("Warning: No textual data available for TF-IDF (combined_text is empty). Semantic search disabled.")
-            self.vectorizer = None
-            self.tfidf_matrix = None
-            return
-
-        try:
-            self.tfidf_matrix = self.vectorizer.fit_transform(self.df['combined_text'])
-        except Exception as e:
-            # Catch empty vocabulary or other issues gracefully
-            print(f"Warning: TF-IDF setup failed: {e}. Semantic search disabled.")
-            self.vectorizer = None
-            self.tfidf_matrix = None
+        # Build TF-IDF matrix from combined text
+        self.tfidf_matrix = self.vectorizer.fit_transform(self.df['combined_text'])
     
     def search_instruments(self, query, top_k=3):
         """
@@ -279,18 +173,15 @@ class MeasurementInstrumentAgent:
         
         # Number of questions analysis
         num_questions = instrument_data.get('No. of Questions / Statements', '')
-        # Try to extract an integer from potentially messy text like '8 aspects'
+        # Extract integer if present (e.g., '8 aspects')
         num_q_int = None
-        try:
-            if isinstance(num_questions, (int, float)):
-                num_q_int = int(num_questions)
-            else:
-                import re as _re
-                m = _re.search(r"(\d+)", str(num_questions))
-                if m:
-                    num_q_int = int(m.group(1))
-        except Exception:
-            num_q_int = None
+        if isinstance(num_questions, (int, float)):
+            num_q_int = int(num_questions)
+        else:
+            import re as _re
+            m = _re.search(r"(\d+)", str(num_questions))
+            if m:
+                num_q_int = int(m.group(1))
 
         if num_q_int == 1:
             advantages.append("Quick to administer (single item)")
@@ -499,52 +390,4 @@ class MeasurementInstrumentAgent:
             response = self.format_response(results)
             print("\n" + response)
 
-# Example usage and testing
-def main():
-    # Initialize the agent with your Excel file
-    # Replace 'your_instruments_data.xlsx' with your actual file path
-    # Use the sheet that contains the instrument table by default
-    agent = MeasurementInstrumentAgent(
-        '/Users/cyrus_lsl/Documents/HKJC/Outcome Repo Agent/measurement_instruments.xlsx',
-        sheet_name='Measurement Instruments'
-    )
-    
-    # Option 1: Run interactive mode
-    # agent.interactive_mode()
-    
-    # Option 2: Test with specific queries
-    test_queries = [
-        "I need to measure physical function in elderly patients",
-        "Looking for cognitive assessment tools",
-        "Quick depression screening instrument",
-        "aerobic capacity test for adults"
-    ]
-    
-    print("🧪 Testing the Measurement Instrument Agent\n")
-    
-    for query in test_queries:
-        print(f"Query: {query}")
-        results = agent.process_query(query)
-        formatted_response = agent.format_response(results)
-        print(formatted_response)
-        print("="*80 + "\n")
-    
-    # Option 3: Use advanced filtering
-    print("🔍 Advanced Filtering Example:")
-    criteria = {
-        'domain': 'Health',
-        'cost': 'Free',
-        'target_group': 'elderly'
-    }
-    filtered_instruments = agent.filter_by_criteria(criteria)
-    print(f"Found {len(filtered_instruments)} instruments matching criteria")
-    
-    # Option 4: Get specific instrument details
-    print("\n📋 Specific Instrument Details:")
-    details = agent.get_instrument_details('2-minute Step Test')
-    if details:
-        print(f"Found: {details['Measurement Instrument']}")
-        print(f"Purpose: {details['Purpose']}")
-
-if __name__ == "__main__":
-    main()
+# Run: streamlit run frontend/app.py
