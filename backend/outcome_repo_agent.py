@@ -1,0 +1,550 @@
+import pandas as pd
+import numpy as np
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+import re
+import difflib
+
+class MeasurementInstrumentAgent:
+    def __init__(self, excel_file_path, sheet_name=None, header_row=None):
+        """
+        Initialize the agent with the Excel data
+        """
+        # Allow specifying sheet name and header row. If header_row is None,
+        # attempt to auto-detect the header row containing the instrument table.
+        self.excel_file_path = excel_file_path
+        self.sheet_name = sheet_name
+
+        if header_row is None:
+            detected = self.detect_table_header(excel_file_path, sheet_name=sheet_name)
+            if detected is not None:
+                header_row = detected
+                print(f"Info: Detected header row at index {header_row}")
+            else:
+                print("Warning: Could not confidently detect a header row; using header=0")
+
+        # Read the sheet using the chosen header_row (None -> pandas default 0)
+        read_kwargs = {}
+        if sheet_name is not None:
+            read_kwargs['sheet_name'] = sheet_name
+        if header_row is not None:
+            read_kwargs['header'] = header_row
+
+        self.df = pd.read_excel(excel_file_path, **read_kwargs)
+        self.preprocess_data()
+        self.setup_similarity_engine()
+
+        # If TF-IDF couldn't be built (likely because the sheet didn't contain
+        # a real table), attempt to auto-detect a table region and re-read
+        # using that region as header.
+        if getattr(self, 'tfidf_matrix', None) is None:
+            region_start = self.detect_table_region(excel_file_path, sheet_name=sheet_name)
+            if region_start is not None and region_start != header_row:
+                print(f"Info: Detected table-like region starting at row {region_start}; re-reading with header={region_start}")
+                read_kwargs['header'] = region_start
+                self.df = pd.read_excel(excel_file_path, **read_kwargs)
+                self.preprocess_data()
+                self.setup_similarity_engine()
+        
+    def preprocess_data(self):
+        """Clean and preprocess the data"""
+        # Safely fill NaN values (avoid in-place dtype warnings)
+        # Convert to object to allow concatenation below
+        self.df = self.df.fillna('').astype(object)
+
+        # Ensure expected columns exist. If a close match exists, use it; otherwise
+        # create an empty column so downstream code doesn't KeyError. This list
+        # covers all column names referenced throughout the class.
+        expected_cols = [
+            'Measurement Instrument', 'Acronym', 'Outcome Domain',
+            'Outcome Keywords', 'Purpose', 'Target Group(s)',
+            'Cost', 'Permission to Use', 'Data Collection', 'Validated in Hong Kong',
+            'No. of Questions / Statements', 'Scale', 'Scoring',
+            'Download (Eng)', 'Download (Chi)', 'Citation',
+            'Repository of Impact Measurement Instruments'
+        ]
+
+        # also include sample question columns
+        for i in range(1, 4):
+            expected_cols.append(f'Sample Question / Statement - {i}')
+
+        # map lowercase column names to original names for fuzzy matching
+        lc_map = {c.lower(): c for c in self.df.columns}
+
+        for col in expected_cols:
+            if col not in self.df.columns:
+                # Try a fuzzy/case-insensitive match against existing columns
+                match = difflib.get_close_matches(col.lower(), lc_map.keys(), n=1, cutoff=0.6)
+                if match:
+                    matched_col = lc_map[match[0]]
+                    # copy data from matched column into the expected column name
+                    self.df[col] = self.df[matched_col]
+                    print(f"Info: Using column '{matched_col}' for expected '{col}'")
+                else:
+                    # create empty column to avoid KeyError later
+                    self.df[col] = ''
+                    print(f"Warning: Expected column '{col}' not found. Created empty column.")
+
+        # Create a combined text field for similarity search (force string)
+        self.df['combined_text'] = (
+            self.df['Measurement Instrument'].astype(str) + ' ' +
+            self.df['Acronym'].astype(str) + ' ' +
+            self.df['Outcome Domain'].astype(str) + ' ' +
+            self.df['Outcome Keywords'].astype(str) + ' ' +
+            self.df['Purpose'].astype(str) + ' ' +
+            self.df['Target Group(s)'].astype(str)
+        )
+
+    def detect_table_header(self, excel_file_path, sheet_name=None, max_rows=60):
+        """Attempt to detect which row contains the table header by scanning
+        the first `max_rows` rows for cells that match expected column names.
+        Returns the row index (0-based) if found, otherwise None.
+        """
+        # Read the sheet without headers
+        read_kwargs = {'header': None}
+        if sheet_name is not None:
+            read_kwargs['sheet_name'] = sheet_name
+
+        try:
+            raw = pd.read_excel(excel_file_path, **read_kwargs)
+        except Exception as e:
+            print(f"Error reading file for header detection: {e}")
+            return None
+
+        expected_keywords = [
+            'measurement instrument', 'acronym', 'outcome domain', 'outcome keyword',
+            'purpose', 'target', 'cost', 'citation', 'scoring', 'download', 'scale'
+        ]
+
+        best_row = None
+        best_score = 0
+
+        for i in range(min(len(raw), max_rows)):
+            row = raw.iloc[i].astype(str).str.lower().tolist()
+            score = 0
+            for kw in expected_keywords:
+                if any(kw in (str(cell) or '') for cell in row if cell and cell != 'nan'):
+                    score += 1
+
+            # Favor rows with multiple matches
+            if score > best_score and score >= 2:
+                best_score = score
+                best_row = i
+
+        return best_row
+
+    def detect_table_region(self, excel_file_path, sheet_name=None, min_nonnull=3, look_ahead=3, max_rows=200):
+        """Detect a contiguous region that looks like a table: a row with at least
+        `min_nonnull` non-empty cells followed by `look_ahead` rows that also have
+        at least `min_nonnull` non-empty cells. Returns the starting row index
+        to use as header, or None if not found.
+        """
+        read_kwargs = {'header': None}
+        if sheet_name is not None:
+            read_kwargs['sheet_name'] = sheet_name
+
+        try:
+            raw = pd.read_excel(excel_file_path, **read_kwargs)
+        except Exception as e:
+            print(f"Error reading file for table region detection: {e}")
+            return None
+
+        rows = len(raw)
+        for i in range(min(rows, max_rows)):
+            nonnull_counts = [(raw.iloc[j].notna().sum()) for j in range(i, min(i + look_ahead + 1, rows))]
+            if len(nonnull_counts) == look_ahead + 1 and all(c >= min_nonnull for c in nonnull_counts):
+                return i
+
+        return None
+        
+    def setup_similarity_engine(self):
+        """Set up TF-IDF for semantic search"""
+        self.vectorizer = TfidfVectorizer(
+            stop_words='english',
+            ngram_range=(1, 2),
+            max_features=5000
+        )
+        # Ensure there is meaningful text to vectorize
+        docs = self.df['combined_text'].astype(str).tolist()
+        non_empty_docs = [d for d in docs if d.strip()]
+        if not non_empty_docs:
+            print("Warning: No textual data available for TF-IDF (combined_text is empty). Semantic search disabled.")
+            self.vectorizer = None
+            self.tfidf_matrix = None
+            return
+
+        try:
+            self.tfidf_matrix = self.vectorizer.fit_transform(self.df['combined_text'])
+        except Exception as e:
+            # Catch empty vocabulary or other issues gracefully
+            print(f"Warning: TF-IDF setup failed: {e}. Semantic search disabled.")
+            self.vectorizer = None
+            self.tfidf_matrix = None
+    
+    def search_instruments(self, query, top_k=3):
+        """
+        Search for the most relevant instruments based on user query
+        """
+        # If TF-IDF wasn't built, return no results
+        if self.vectorizer is None or self.tfidf_matrix is None:
+            return []
+
+        # Transform query to TF-IDF
+        query_vec = self.vectorizer.transform([query])
+
+        # Calculate similarities
+        similarities = cosine_similarity(query_vec, self.tfidf_matrix).flatten()
+        
+        # Get top matches
+        top_indices = similarities.argsort()[-top_k:][::-1]
+        
+        results = []
+        for idx in top_indices:
+            if similarities[idx] > 0.1:  # Minimum similarity threshold
+                instrument_data = self.df.iloc[idx]
+                results.append({
+                    'instrument': instrument_data,
+                    'similarity_score': similarities[idx],
+                    'rank': len(results) + 1
+                })
+        
+        return results
+    
+    def extract_scoring_info(self, instrument_data):
+        """Extract and format scoring information"""
+        scoring_info = {
+            'scale': instrument_data.get('Scale', ''),
+            'scoring': instrument_data.get('Scoring', ''),
+            'interpretation': self.interpret_scoring(instrument_data.get('Scoring', ''))
+        }
+        return scoring_info
+    
+    def interpret_scoring(self, scoring_text):
+        """Provide interpretation of scoring system"""
+        scoring_text = str(scoring_text).lower()
+        
+        interpretations = []
+        
+        if 'higher' in scoring_text and 'better' in scoring_text:
+            interpretations.append("Higher scores indicate better outcomes")
+        elif 'lower' in scoring_text and 'better' in scoring_text:
+            interpretations.append("Lower scores indicate better outcomes")
+        
+        if 'cut-off' in scoring_text or 'cutoff' in scoring_text:
+            interpretations.append("Uses cut-off scores for interpretation")
+            
+        if 'age' in scoring_text and 'gender' in scoring_text:
+            interpretations.append("Scoring varies by age and gender")
+            
+        return interpretations
+    
+    def generate_considerations(self, instrument_data):
+        """Generate important considerations for the instrument"""
+        considerations = []
+        
+        # Cost considerations
+        cost = instrument_data.get('Cost', '')
+        if 'free' in str(cost).lower():
+            considerations.append("✓ Free to use")
+        else:
+            considerations.append(f"Cost: {cost}")
+        
+        # Permission requirements
+        permission = instrument_data.get('Permission to Use', '')
+        if 'not required' in str(permission).lower():
+            considerations.append("✓ No permission required")
+        else:
+            considerations.append(f"Permission: {permission}")
+        
+        # Data collection requirements
+        data_collection = instrument_data.get('Data Collection', '')
+        if 'equipment' in str(data_collection).lower():
+            considerations.append("⚠ Requires special equipment")
+        if 'administered' in str(data_collection).lower():
+            considerations.append("⚠ Requires trained administrator")
+        
+        # Validation status
+        validated = instrument_data.get('Validated in Hong Kong', '')
+        if validated and str(validated).strip() and str(validated).lower() not in ['-', 'no']:
+            considerations.append("✓ Validated in Hong Kong context")
+        else:
+            considerations.append("⚠ Not specifically validated for Hong Kong")
+        
+        return considerations
+    
+    def generate_advantages_disadvantages(self, instrument_data):
+        """Generate advantages and disadvantages based on instrument characteristics"""
+        advantages = []
+        disadvantages = []
+        
+        # Number of questions analysis
+        num_questions = instrument_data.get('No. of Questions / Statements', '')
+        # Try to extract an integer from potentially messy text like '8 aspects'
+        num_q_int = None
+        try:
+            if isinstance(num_questions, (int, float)):
+                num_q_int = int(num_questions)
+            else:
+                import re as _re
+                m = _re.search(r"(\d+)", str(num_questions))
+                if m:
+                    num_q_int = int(m.group(1))
+        except Exception:
+            num_q_int = None
+
+        if num_q_int == 1:
+            advantages.append("Quick to administer (single item)")
+        elif num_q_int is not None and num_q_int > 10:
+            disadvantages.append("Time-consuming due to many items")
+        else:
+            advantages.append("Reasonable administration time")
+        
+        # Data collection analysis
+        data_collection = str(instrument_data.get('Data Collection', '')).lower()
+        if 'self-administered' in data_collection:
+            advantages.append("Can be self-administered")
+        if 'equipment' in data_collection:
+            disadvantages.append("Requires specific equipment")
+        if 'trained' in data_collection:
+            disadvantages.append("Requires trained administrator")
+        
+        # Sample questions analysis
+        has_sample_questions = any(
+            instrument_data.get(f'Sample Question / Statement - {i}', '') not in ['', '-']
+            for i in range(1, 4)
+        )
+        if has_sample_questions:
+            advantages.append("Well-documented with sample items")
+        
+        return advantages, disadvantages
+    
+    def process_query(self, user_query):
+        """
+        Main method to process user query and return recommendations
+        """
+        # Search for relevant instruments
+        results = self.search_instruments(user_query)
+        
+        if not results:
+            return "No suitable instruments found for your query. Please try different keywords."
+        
+        response = {
+            'query': user_query,
+            'recommendations': [],
+            'comparison': {}
+        }
+        
+        # Process each recommended instrument
+        for result in results:
+            instrument_data = result['instrument']
+            
+            recommendation = {
+                'name': instrument_data['Measurement Instrument'],
+                'acronym': instrument_data['Acronym'],
+                'purpose': instrument_data['Purpose'],
+                'target_group': instrument_data['Target Group(s)'],
+                'domain': instrument_data['Outcome Domain'],
+                'similarity_score': round(result['similarity_score'], 3),
+                'scoring_info': self.extract_scoring_info(instrument_data),
+                'considerations': self.generate_considerations(instrument_data),
+                'advantages': [],
+                'disadvantages': [],
+                'num_questions': instrument_data.get('No. of Questions / Statements', ''),
+                'resources': {
+                    'english_download': instrument_data.get('Download (Eng)', ''),
+                    'chinese_download': instrument_data.get('Download (Chi)', ''),
+                    'citation': instrument_data.get('Citation', '')
+                }
+            }
+            
+            # Generate advantages and disadvantages
+            advantages, disadvantages = self.generate_advantages_disadvantages(instrument_data)
+            recommendation['advantages'] = advantages
+            recommendation['disadvantages'] = disadvantages
+            
+            response['recommendations'].append(recommendation)
+        
+        # Add comparison information
+        response['comparison'] = self.compare_instruments(response['recommendations'])
+        
+        return response
+    
+    def compare_instruments(self, recommendations):
+        """Compare the recommended instruments"""
+        if len(recommendations) < 2:
+            return {}
+        
+        comparison = {
+            'scoring_similarity': "All instruments use distinct scoring approaches",
+            'common_advantages': [],
+            'common_considerations': []
+        }
+        
+        # Find common advantages
+        all_advantages = [set(rec['advantages']) for rec in recommendations]
+        common_advantages = set.intersection(*all_advantages) if all_advantages else set()
+        comparison['common_advantages'] = list(common_advantages)
+        
+        # Find common considerations
+        all_considerations = [set(rec['considerations']) for rec in recommendations]
+        common_considerations = set.intersection(*all_considerations) if all_considerations else set()
+        comparison['common_considerations'] = list(common_considerations)
+        
+        return comparison
+    
+    def format_response(self, processed_results):
+        """Format the response in a user-friendly way"""
+        if isinstance(processed_results, str):
+            return processed_results
+        
+        response = f"🔍 **Recommendations for: \"{processed_results['query']}\"**\n\n"
+        
+        for i, rec in enumerate(processed_results['recommendations'], 1):
+            response += f"**{i}. {rec['name']} ({rec['acronym']})**\n"
+            response += f"   • **Relevance Score**: {rec['similarity_score']}/1.0\n"
+            response += f"   • **Purpose**: {rec['purpose']}\n"
+            response += f"   • **Target Group**: {rec['target_group']}\n"
+            response += f"   • **Domain**: {rec['domain']}\n"
+            response += f"   • **Items**: {rec['num_questions']} questions\n\n"
+            
+            # Scoring information
+            response += f"   **Scoring Information**:\n"
+            response += f"   - Scale: {rec['scoring_info']['scale']}\n"
+            response += f"   - Scoring: {rec['scoring_info']['scoring']}\n"
+            if rec['scoring_info']['interpretation']:
+                for interpret in rec['scoring_info']['interpretation']:
+                    response += f"   - {interpret}\n"
+            
+            # Advantages and Disadvantages
+            response += f"\n   **Advantages**:\n"
+            for adv in rec['advantages']:
+                response += f"   ✓ {adv}\n"
+                
+            response += f"\n   **Disadvantages**:\n"
+            for disadv in rec['disadvantages']:
+                response += f"   ⚠ {disadv}\n"
+            
+            # Important Considerations
+            response += f"\n   **Important Notes**:\n"
+            for consideration in rec['considerations']:
+                response += f"   • {consideration}\n"
+            
+            response += "\n" + "-"*50 + "\n\n"
+        
+        # Comparison section
+        if processed_results['comparison']:
+            response += "**📊 Comparison Summary**:\n"
+            if processed_results['comparison']['common_advantages']:
+                response += "Common advantages across recommendations:\n"
+                for adv in processed_results['comparison']['common_advantages']:
+                    response += f"• {adv}\n"
+            
+            if processed_results['comparison']['common_considerations']:
+                response += "\nImportant considerations for all:\n"
+                for cons in processed_results['comparison']['common_considerations']:
+                    response += f"• {cons}\n"
+        
+        return response
+
+    # Advanced features integrated directly into the main class
+    def filter_by_criteria(self, criteria):
+        """
+        Filter instruments by specific criteria
+        criteria example: {
+            'domain': 'Health',
+            'cost': 'Free',
+            'target_group': 'elderly',
+            'validated_hk': True
+        }
+        """
+        filtered_df = self.df.copy()
+        
+        if criteria.get('domain'):
+            filtered_df = filtered_df[filtered_df['Outcome Domain'].str.contains(
+                criteria['domain'], case=False, na=False)]
+        
+        if criteria.get('cost') == 'Free':
+            filtered_df = filtered_df[filtered_df['Cost'].str.contains(
+                'free', case=False, na=False)]
+        
+        if criteria.get('target_group'):
+            filtered_df = filtered_df[filtered_df['Target Group(s)'].str.contains(
+                criteria['target_group'], case=False, na=False)]
+        
+        return filtered_df
+    
+    def get_instrument_details(self, instrument_name):
+        """Get detailed information about a specific instrument"""
+        instrument = self.df[
+            self.df['Measurement Instrument'].str.contains(
+                instrument_name, case=False, na=False)
+        ]
+        
+        if not instrument.empty:
+            return instrument.iloc[0].to_dict()
+        return None
+
+    def interactive_mode(self):
+        """Run the agent in interactive mode"""
+        print("🤖 Measurement Instrument Recommendation Agent")
+        print("Type 'quit' to exit\n")
+        
+        while True:
+            user_input = input("What type of measurement instrument are you looking for? ")
+            
+            if user_input.lower() in ['quit', 'exit', 'q']:
+                break
+            
+            results = self.process_query(user_input)
+            response = self.format_response(results)
+            print("\n" + response)
+
+# Example usage and testing
+def main():
+    # Initialize the agent with your Excel file
+    # Replace 'your_instruments_data.xlsx' with your actual file path
+    # Use the sheet that contains the instrument table by default
+    agent = MeasurementInstrumentAgent(
+        '/Users/cyrus_lsl/Documents/HKJC/Outcome Repo Agent/measurement_instruments.xlsx',
+        sheet_name='Measurement Instruments'
+    )
+    
+    # Option 1: Run interactive mode
+    # agent.interactive_mode()
+    
+    # Option 2: Test with specific queries
+    test_queries = [
+        "I need to measure physical function in elderly patients",
+        "Looking for cognitive assessment tools",
+        "Quick depression screening instrument",
+        "aerobic capacity test for adults"
+    ]
+    
+    print("🧪 Testing the Measurement Instrument Agent\n")
+    
+    for query in test_queries:
+        print(f"Query: {query}")
+        results = agent.process_query(query)
+        formatted_response = agent.format_response(results)
+        print(formatted_response)
+        print("="*80 + "\n")
+    
+    # Option 3: Use advanced filtering
+    print("🔍 Advanced Filtering Example:")
+    criteria = {
+        'domain': 'Health',
+        'cost': 'Free',
+        'target_group': 'elderly'
+    }
+    filtered_instruments = agent.filter_by_criteria(criteria)
+    print(f"Found {len(filtered_instruments)} instruments matching criteria")
+    
+    # Option 4: Get specific instrument details
+    print("\n📋 Specific Instrument Details:")
+    details = agent.get_instrument_details('2-minute Step Test')
+    if details:
+        print(f"Found: {details['Measurement Instrument']}")
+        print(f"Purpose: {details['Purpose']}")
+
+if __name__ == "__main__":
+    main()
