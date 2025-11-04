@@ -58,7 +58,11 @@ if st.button('Send', key='send_button') and query.strip():
     results = agent.process_query(query)
     response = agent.format_response(results)
     st.session_state['last_response'] = response
-        
+
+# Show query
+st.header("Query")
+if st.session_state.get('last_query'):
+    st.markdown(st.session_state['last_response'])
 
 # Collapsible data explorer
 with st.expander("Browse all instruments"):
