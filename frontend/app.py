@@ -40,37 +40,6 @@ except FileNotFoundError:
 except Exception as e:
     st.error(f"Failed to load measurement instruments file: {e}")
 
-# Sidebar: download option and example queries
-st.sidebar.header('Actions & Help')
-if agent:
-    if st.sidebar.button('Download parsed table (CSV)'):
-        csv = agent.df.to_csv(index=False)
-        st.sidebar.download_button('Download CSV', csv, file_name='instruments_parsed.csv')
-else:
-    st.sidebar.info('Upload or provide a valid Excel file to enable downloads and queries.')
-
-st.sidebar.header('Example queries')
-example_queries = [
-    "physical function assessment for elderly",
-    "quick depression screening tools",
-    "cognitive assessment validated in Hong Kong",
-    "free assessment tools for children",
-]
-if st.sidebar.button("Show example queries"):
-    query = st.sidebar.radio(
-        "Select a query to try:",
-        example_queries
-    )
-    if st.sidebar.button("Use this query"):
-        if not agent:
-            st.sidebar.info('Please upload or provide the Excel file before running queries.')
-        else:
-            st.session_state.chat_history.append({"role": "user", "content": query})
-            results = agent.process_query(query)
-            st.session_state.chat_history.append(
-                {"role": "assistant", "content": agent.format_response(results)}
-            )
-
 # Chat interface
 st.header("Ask about measurement instruments")
 st.markdown("""
