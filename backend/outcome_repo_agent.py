@@ -200,8 +200,7 @@ class MeasurementInstrumentAgent:
         
         response = {
             'query': user_query,
-            'recommendations': [],
-            'comparison': {}
+            'recommendations': []
         }
         
         for result in results:
@@ -231,9 +230,6 @@ class MeasurementInstrumentAgent:
             recommendation['disadvantages'] = disadvantages
             
             response['recommendations'].append(recommendation)
-        
-        response['comparison'] = self.compare_instruments(response['recommendations'])
-        
         return response
     
     
