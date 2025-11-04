@@ -87,6 +87,8 @@ with st.expander("Browse all instruments"):
     if st.button('Get Details') and name.strip():
         details = agent.get_instrument_details(name)
         if details:
-            st.table(details)
+            if isinstance(details, dict) and 'combined_text' in details:
+                details.pop('combined_text')
+            st.json(details)
         else:
             st.info('No instrument matched that name')
