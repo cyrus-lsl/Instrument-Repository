@@ -24,12 +24,11 @@ def load_agent(path_or_buffer):
 st.set_page_config(page_title='Outcome Repo Agent', layout='wide')
 st.title('Outcome Repository — Measurement Instrument Assistant')
 
-# Initialize session state for chat history
-if 'chat_history' not in st.session_state:
-    st.session_state.chat_history = []
+if 'last_query' not in st.session_state:
+    st.session_state['last_query'] = ''
+if 'last_response' not in st.session_state:
+    st.session_state['last_response'] = ''
 
-# Load the repo-bundled Excel file by default (no uploader). This expects
-# `measurement_instruments.xlsx` to live at the repository root.
 excel_path = Path(__file__).resolve().parents[1] / "measurement_instruments.xlsx"
 
 agent = None
@@ -54,17 +53,15 @@ query = st.text_input('Enter your enquiry', key='user_input')
 
 # Send button
 if st.button('Send', key='send_button') and query.strip():
-    # Add user message to chat
-    st.session_state.chat_history.append({"role": "user", "content": query})
-    
-    # Get agent response
+    # Store only the most recent query and response in session state
+    st.session_state['last_query'] = query
+
     if not agent:
-        st.session_state.chat_history.append({"role": "assistant", "content": "Please upload or provide a valid Excel file before querying."})
+        st.session_state['last_response'] = "Please upload or provide a valid Excel file before querying."
     else:
         results = agent.process_query(query)
         response = agent.format_response(results)
-        # Add assistant response
-        st.session_state.chat_history.append({"role": "assistant", "content": response})
+        st.session_state['last_response'] = response
         
 
 # Collapsible data explorer
@@ -98,13 +95,9 @@ with st.expander("Browse all instruments"):
         else:
             st.info('No instrument matched that name')
 
-# Conversation history (shows after the data explorer)
-st.header("Conversation History")
-for message in st.session_state.chat_history:
-    role = message.get("role", "assistant")
-    content = message.get("content", "")
-    if role == "user":
-        st.markdown(f"**You:** {content}")
-    else:
-        st.markdown(f"**Assistant:** {content}")
-    st.markdown("---")
+# Show only the most recent query and assistant response
+st.header("Most recent query")
+if st.session_state.get('last_query'):
+    st.markdown(st.session_state['last_response'])
+else:
+    st.info('No queries yet. Type a question and press Send.')
