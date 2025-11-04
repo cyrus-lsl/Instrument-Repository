@@ -75,6 +75,11 @@ with st.expander("Browse all instruments"):
     for c in df_display.select_dtypes(include=['object']).columns:
         df_display[c] = df_display[c].astype(str)
 
+    if not df_display.empty:
+        last_row = df_display.iloc[-1].astype(str)
+        if (last_row == 'combined_text').any():
+            df_display = df_display.iloc[:-1]
+
     st.dataframe(df_display)
     
     st.subheader('Quick lookup')
@@ -82,7 +87,6 @@ with st.expander("Browse all instruments"):
     if st.button('Get Details') and name.strip():
         details = agent.get_instrument_details(name)
         if details:
-            details = pd.DataFrame([details]) if isinstance(details, dict) else pd.DataFrame(details)
-            st.table(details.iloc[:-1])
+            st.table(details)
         else:
             st.info('No instrument matched that name')
