@@ -55,13 +55,9 @@ query = st.text_input('Enter your enquiry', key='user_input')
 if st.button('Send', key='send_button') and query.strip():
     # Store only the most recent query and response in session state
     st.session_state['last_query'] = query
-
-    if not agent:
-        st.session_state['last_response'] = "Please upload or provide a valid Excel file before querying."
-    else:
-        results = agent.process_query(query)
-        response = agent.format_response(results)
-        st.session_state['last_response'] = response
+    results = agent.process_query(query)
+    response = agent.format_response(results)
+    st.session_state['last_response'] = response
         
 
 # Collapsible data explorer
@@ -80,7 +76,7 @@ with st.expander("Browse all instruments"):
     st.dataframe(df_display)
     
     st.subheader('Quick lookup')
-    name = st.text_input('Get details for instrument (name contains)', '')
+    name = st.text_input('Get details for instrument', '')
     if st.button('Get Details') and name.strip():
         details = agent.get_instrument_details(name)
         if details:
@@ -96,8 +92,6 @@ with st.expander("Browse all instruments"):
             st.info('No instrument matched that name')
 
 # Show only the most recent query and assistant response
-st.header("Most recent query")
+st.header("Query")
 if st.session_state.get('last_query'):
     st.markdown(st.session_state['last_response'])
-else:
-    st.info('No queries yet. Type a question and press Send.')
