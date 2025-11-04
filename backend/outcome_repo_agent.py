@@ -236,12 +236,7 @@ class MeasurementInstrumentAgent:
     def format_response(self, processed_results):
         """Format the response in a user-friendly way"""
         if isinstance(processed_results, str):
-            return processed_results
-
-        if isinstance(processed_results, dict) and 'comparison' in processed_results:
-            processed_results = dict(processed_results)
-            processed_results.pop('comparison', None)
-        
+            return processed_results        
         response = f"🔍 **Recommendations for: \"{processed_results['query']}\"**\n\n"
         
         for i, rec in enumerate(processed_results['recommendations'], 1):
