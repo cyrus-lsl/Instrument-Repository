@@ -67,33 +67,21 @@ if st.button('Send', key='send_button') and query.strip():
         st.session_state.chat_history.append({"role": "assistant", "content": response})
         
 
-# Show chat history
-st.header("Conversation History")
-for message in st.session_state.chat_history:
-    if message["role"] == "user":
-        st.markdown(f"**You:** {message['content']}")
-    else:
-        st.markdown(f"**Assistant:** {message['content']}")
-    st.markdown("---")
-
 # Collapsible data explorer
 with st.expander("Browse all instruments"):
-    if not agent:
-        st.info('No data loaded. Upload an Excel file to browse instruments.')
-    else:
-        df_display = agent.df.copy()
-        if 'No. of Questions / Statements' in df_display.columns:
-            df_display['No. of Questions / Statements'] = df_display['No. of Questions / Statements'].astype(str)
-        for c in df_display.select_dtypes(include=['object']).columns:
-            df_display[c] = df_display[c].astype(str)
+    df_display = agent.df.copy()
+    if 'No. of Questions / Statements' in df_display.columns:
+        df_display['No. of Questions / Statements'] = df_display['No. of Questions / Statements'].astype(str)
+    for c in df_display.select_dtypes(include=['object']).columns:
+        df_display[c] = df_display[c].astype(str)
 
-        st.dataframe(df_display)
-        
-        st.subheader('Quick lookup')
-        name = st.text_input('Get details for instrument (name contains)', '')
-        if st.button('Get Details') and name.strip():
-            details = agent.get_instrument_details(name)
-            if details:
-                st.json(details)
-            else:
-                st.info('No instrument matched that name')
+    st.dataframe(df_display)
+    
+    st.subheader('Quick lookup')
+    name = st.text_input('Get details for instrument (name contains)', '')
+    if st.button('Get Details') and name.strip():
+        details = agent.get_instrument_details(name)
+        if details:
+            st.table(details)
+        else:
+            st.info('No instrument matched that name')
