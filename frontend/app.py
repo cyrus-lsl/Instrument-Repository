@@ -97,3 +97,14 @@ with st.expander("Browse all instruments"):
                 st.json(details)
         else:
             st.info('No instrument matched that name')
+
+# Conversation history (shows after the data explorer)
+st.header("Conversation History")
+for message in st.session_state.chat_history:
+    role = message.get("role", "assistant")
+    content = message.get("content", "")
+    if role == "user":
+        st.markdown(f"**You:** {content}")
+    else:
+        st.markdown(f"**Assistant:** {content}")
+    st.markdown("---")
