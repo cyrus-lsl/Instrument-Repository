@@ -24,8 +24,6 @@ def load_agent(path_or_buffer):
 st.set_page_config(page_title='Outcome Repo Agent', layout='wide')
 st.title('Outcome Repository — Measurement Instrument Assistant')
 
-if 'last_query' not in st.session_state:
-    st.session_state['last_query'] = ''
 if 'last_response' not in st.session_state:
     st.session_state['last_response'] = ''
 
@@ -53,16 +51,15 @@ query = st.text_input('Enter your enquiry', key='user_input')
 
 # Send button
 if st.button('Send', key='send_button') and query.strip():
-    # Store only the most recent query and response in session state
-    st.session_state['last_query'] = query
-    results = agent.process_query(query)
-    response = agent.format_response(results)
-    st.session_state['last_response'] = response
+    # Store only the most recent response in session state
+    if not agent:
+        st.session_state['last_response'] = "Please upload or provide a valid Excel file before querying."
+    else:
+        results = agent.process_query(query)
+        response = agent.format_response(results)
+        st.session_state['last_response'] = response
 
-# Show query
-st.header("Query")
-if st.session_state.get('last_query'):
-    st.markdown(st.session_state['last_response'])
+# (No per-query display here; we show only the most recent response below)
 
 # Collapsible data explorer
 with st.expander("Browse all instruments"):
@@ -95,7 +92,7 @@ with st.expander("Browse all instruments"):
         else:
             st.info('No instrument matched that name')
 
-# Show only the most recent query and assistant response
-st.header("Query")
-if st.session_state.get('last_query'):
+# Show only the most recent assistant response
+st.header("Most recent response")
+if st.session_state.get('last_response'):
     st.markdown(st.session_state['last_response'])

@@ -236,26 +236,6 @@ class MeasurementInstrumentAgent:
         
         return response
     
-    def compare_instruments(self, recommendations):
-        """Compare the recommended instruments"""
-        if len(recommendations) < 2:
-            return {}
-        
-        comparison = {
-            'scoring_similarity': "All instruments use distinct scoring approaches",
-            'common_advantages': [],
-            'common_considerations': []
-        }
-        
-        all_advantages = [set(rec['advantages']) for rec in recommendations]
-        common_advantages = set.intersection(*all_advantages) if all_advantages else set()
-        comparison['common_advantages'] = list(common_advantages)
-        
-        all_considerations = [set(rec['considerations']) for rec in recommendations]
-        common_considerations = set.intersection(*all_considerations) if all_considerations else set()
-        comparison['common_considerations'] = list(common_considerations)
-        
-        return comparison
     
     def format_response(self, processed_results):
         """Format the response in a user-friendly way"""
@@ -292,19 +272,6 @@ class MeasurementInstrumentAgent:
                 response += f"   • {consideration}\n"
             
             response += "\n" + "-"*50 + "\n\n"
-        
-        if processed_results['comparison']:
-            response += "**📊 Comparison Summary**:\n"
-            if processed_results['comparison']['common_advantages']:
-                response += "Common advantages across recommendations:\n"
-                for adv in processed_results['comparison']['common_advantages']:
-                    response += f"• {adv}\n"
-            
-            if processed_results['comparison']['common_considerations']:
-                response += "\nImportant considerations for all:\n"
-                for cons in processed_results['comparison']['common_considerations']:
-                    response += f"• {cons}\n"
-        
         return response
 
     def filter_by_criteria(self, criteria):
