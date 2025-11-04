@@ -93,6 +93,6 @@ with st.expander("Browse all instruments"):
             st.info('No instrument matched that name')
 
 # Show only the most recent assistant response
-st.header("Most recent response")
+st.header("Response")
 if st.session_state.get('last_response'):
     st.markdown(st.session_state['last_response'])
