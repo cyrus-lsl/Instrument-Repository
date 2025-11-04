@@ -82,6 +82,7 @@ with st.expander("Browse all instruments"):
     if st.button('Get Details') and name.strip():
         details = agent.get_instrument_details(name)
         if details:
+            details = pd.DataFrame([details]) if isinstance(details, dict) else pd.DataFrame(details)
             st.table(details.iloc[:-1])
         else:
             st.info('No instrument matched that name')
