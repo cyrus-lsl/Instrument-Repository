@@ -82,6 +82,6 @@ with st.expander("Browse all instruments"):
     if st.button('Get Details') and name.strip():
         details = agent.get_instrument_details(name)
         if details:
-            st.table(details)
+            st.table(details[-1].to_frame().T)
         else:
             st.info('No instrument matched that name')
