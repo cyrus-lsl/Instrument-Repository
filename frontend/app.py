@@ -89,6 +89,11 @@ with st.expander("Browse all instruments"):
         if details:
             if isinstance(details, dict) and 'combined_text' in details:
                 details.pop('combined_text')
-            st.json(details)
+            try:
+                df_details = pd.DataFrame.from_dict(details, orient='index', columns=['Value'])
+                df_details.index.name = 'Field'
+                st.table(df_details)
+            except Exception:
+                st.json(details)
         else:
             st.info('No instrument matched that name')
