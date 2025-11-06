@@ -64,10 +64,7 @@ if page == "Ask":
 
     # Show response
     st.header("Agent Response")
-    if st.session_state.get('last_response'):
-        st.markdown(st.session_state['last_response'])
-    else:
-        st.info('No responses yet. Type a question and press Send.')
+    st.markdown(st.session_state['last_response'])
 
 else:
     # Browse Instruments page
