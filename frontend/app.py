@@ -63,7 +63,7 @@ if page == "Ask":
             st.session_state['last_response'] = response
 
     # Show response
-    st.header("Most recent response")
+    st.header("Agent Response")
     if st.session_state.get('last_response'):
         st.markdown(st.session_state['last_response'])
     else:
