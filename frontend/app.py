@@ -3,7 +3,7 @@ import pandas as pd
 import sys
 from pathlib import Path
 
-# Add parent directory to Python
+# Add parent directory
 root_dir = Path(__file__).parent.parent
 sys.path.append(str(root_dir))
 
@@ -29,7 +29,7 @@ if 'last_response' not in st.session_state:
 
 excel_path = Path(__file__).resolve().parents[1] / "measurement_instruments.xlsx"
 
-# Load agent with clear errors if loading fails
+# Load agent
 agent = None
 try:
     agent = load_agent(str(excel_path))
@@ -55,7 +55,6 @@ if page == "Ask":
 
     # Send button
     if st.button('Send', key='send_button') and query.strip():
-        # Store only the most recent response in session state
         if not agent:
             st.session_state['last_response'] = "Please upload or provide a valid Excel file before querying."
         else:
@@ -63,7 +62,7 @@ if page == "Ask":
             response = agent.format_response(results)
             st.session_state['last_response'] = response
 
-    # Show only the most recent assistant response
+    # Show response
     st.header("Most recent response")
     if st.session_state.get('last_response'):
         st.markdown(st.session_state['last_response'])
@@ -104,4 +103,3 @@ else:
                     st.json(details)
             else:
                 st.info('No instrument matched that name')
-# (Response displayed on the Ask page only)
